@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>מעקב משמרות</title>
+
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#3498db" />
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('service-worker.js');
+        });
+      }
+    </script>
+
+    <style>
+      /* עיצוב כללי */
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        direction: rtl;
+        background: #f5f7fa;
+        color: #333;
+        margin: 0;
+        padding: 20px;
+      }
+      .container {
+        max-width: 600px;
+        margin: auto;
+        background: #fff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+      h1, h2 {
+        margin-top: 0;
+        color: #2c3e50;
+      }
+      label {
+        display: block;
+        margin-bottom: 10px;
+      }
+      input[type="number"], input[type="datetime-local"] {
+        width: calc(100% - 12px);
+        padding: 6px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+        margin-top: 4px;
+      }
+      button {
+        padding: 8px 16px;
+        margin: 5px 5px 5px 0;
+        border: none;
+        border-radius: 4px;
+        background: #3498db;
+        color: #fff;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover {
+        background: #2980b9;
+      }
+      .current-shift {
+        margin: 15px 0;
+        padding: 10px;
+        background: #e8f6ff;
+        border-left: 4px solid #3498db;
+        border-radius: 4px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+      }
+      th, td {
+        padding: 10px;
+        text-align: center;
+      }
+      thead th {
+        background: #2c3e50;
+        color: #fff;
+      }
+      tbody tr:nth-child(odd) {
+        background: #f9f9f9;
+      }
+      tbody tr:hover {
+        background: #eef6fc;
+      }
+      .summary {
+        margin-top: 20px;
+        padding: 10px;
+        background: #dff0d8;
+        border-left: 4px solid #27ae60;
+        border-radius: 4px;
+      }
+    </style>
+</head>
+<body>
+  <div class="container">
+    <h1>מעקב משמרות</h1>
+    <label>שכר לשעה
+      <input type="number" id="hourlyWage" placeholder="₪" />
+    </label>
+    <div>
+      <button onclick="startShift()">התחל משמרת</button>
+      <button onclick="endShift()">סיים משמרת</button>
+    </div>
+    <div id="currentShiftInfo" class="current-shift"></div>
+
+    <h2>הוספת משמרת ידנית</h2>
+    <div>
+      <label>התחלה
+        <input type="datetime-local" id="manualStart" />
+      </label>
+      <label>סיום
+        <input type="datetime-local" id="manualEnd" />
+      </label>
+      <button onclick="addManualShift()">הוסף משמרת</button>
+    </div>
+
+    <h2>היסטוריה</h2>
+    <table id="shiftTable">
+      <thead>
+        <tr>
+          <th>תאריך</th>
+          <th>התחלה</th>
+          <th>סיום</th>
+          <th>משך</th>
+          <th>שכר</th>
+          <th>מחיקה</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="summary" id="monthlySummary"></div>
+  </div>
+
+  <script>
+    let timerInterval = null;
+
+    function loadShifts() {
+      const data = localStorage.getItem('shifts');
+      return data ? JSON.parse(data) : [];
+    }
+    function saveShifts(shifts) {
+      localStorage.setItem('shifts', JSON.stringify(shifts));
+    }
+    function renderTable() {
+      const shifts = loadShifts();
+      const tbody = document.querySelector('#shiftTable tbody');
+      tbody.innerHTML = '';
+      const wage = parseFloat(document.getElementById('hourlyWage').value) || 0;
+      let monthlyTotalMs = 0, monthlyTotalPay = 0;
+      const now = new Date(), thisMonth = now.getMonth(), thisYear = now.getFullYear();
+
+      shifts.forEach((shift, i) => {
+        const start = new Date(shift.start), end = new Date(shift.end);
+        const durationMs = end - start;
+        const h = Math.floor(durationMs/3600000),
+              m = Math.floor((durationMs%3600000)/60000),
+              s = Math.floor((durationMs%60000)/1000);
+        const durationStr = `${h}h ${m}m ${s}s`;
+        const pay = ((durationMs/3600000)*wage).toFixed(2);
+
+        if (start.getMonth()===thisMonth && start.getFullYear()===thisYear) {
+          monthlyTotalMs += durationMs;
+          monthlyTotalPay += parseFloat(pay);
+        }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${start.toLocaleDateString()}</td>
+          <td>${start.toLocaleTimeString()}</td>
+          <td>${end.toLocaleTimeString()}</td>
+          <td>${durationStr}</td>
+          <td>₪${pay}</td>
+          <td><button onclick="deleteShift(${i})">X</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      const totalH = Math.floor(monthlyTotalMs/3600000),
+            totalM = Math.floor((monthlyTotalMs%3600000)/60000),
+            totalS = Math.floor((monthlyTotalMs%60000)/1000);
+      document.getElementById('monthlySummary').innerText =
+        `סיכום לחודש: ${thisYear}/${thisMonth+1} - סך זמן: ${totalH}h ${totalM}m ${totalS}s, סך שכר: ₪${monthlyTotalPay.toFixed(2)}`;
+    }
+
+    function formatElapsed(start) {
+      const diff = new Date() - start;
+      const h = Math.floor(diff/3600000),
+            m = Math.floor((diff%3600000)/60000),
+            s = Math.floor((diff%60000)/1000);
+      return `${h}h ${m}m ${s}s`;
+    }
+    function updateCurrentShiftInfo() {
+      const infoEl = document.getElementById('currentShiftInfo');
+      const startIso = localStorage.getItem('currentShiftStart');
+      if (startIso) {
+        const start = new Date(startIso);
+        infoEl.innerText =
+          `משמרת נוכחית התחילה ב: ${start.toLocaleTimeString()} | זמן שעבר: ${formatElapsed(start)}`;
+      } else infoEl.innerText = '';
+    }
+    function startTimer() {
+      stopTimer();
+      updateCurrentShiftInfo();
+      timerInterval = setInterval(updateCurrentShiftInfo, 1000);
+    }
+    function stopTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+    }
+
+    function addShift(start,end) {
+      const shifts = loadShifts();
+      shifts.push({start:start.toISOString(),end:end.toISOString()});
+      saveShifts(shifts);
+    }
+    function startShift() {
+      const now = new Date();
+      localStorage.setItem('currentShiftStart', now.toISOString());
+      startTimer();
+    }
+    function endShift() {
+      const iso = localStorage.getItem('currentShiftStart');
+      if (!iso){ alert('לא התחלת משמרת!'); return; }
+      const start = new Date(iso), end = new Date();
+      addShift(start,end);
+      localStorage.removeItem('currentShiftStart');
+      stopTimer();
+      renderTable();
+      updateCurrentShiftInfo();
+    }
+    function addManualShift() {
+      const s=document.getElementById('manualStart').value,
+            e=document.getElementById('manualEnd').value;
+      if(!s||!e){ alert('אנא מלא את שני השדות'); return; }
+      const start=new Date(s), end=new Date(e);
+      if(end<=start){ alert('סיום חייב אחרי התחלה'); return; }
+      addShift(start,end);
+      renderTable();
+    }
+    function deleteShift(i) {
+      const shifts=loadShifts();
+      shifts.splice(i,1);
+      saveShifts(shifts);
+      renderTable();
+    }
+
+    window.onload = () => {
+      document.getElementById('hourlyWage').addEventListener('input', renderTable);
+      renderTable();
+      updateCurrentShiftInfo();
+      if (localStorage.getItem('currentShiftStart')) startTimer();
+    };
+  </script>
+</body>
+</html>
